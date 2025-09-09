@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-solescrow = "3zG5YyBSndYJBKPvMo8vnBLSqF5j56QRGcYv2JBN8haJ"
+solana_escrow = "5jujwhy3XVk4RFdUgbn1x63sBp9V3j2Pb1sRMh72bqfL"
 
 [registry]
 url = "https://api.apr.dev"

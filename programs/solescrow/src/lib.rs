@@ -1,16 +1,20 @@
 use anchor_lang::prelude::*;
 
-declare_id!("3zG5YyBSndYJBKPvMo8vnBLSqF5j56QRGcYv2JBN8haJ");
+declare_id!("5jujwhy3XVk4RFdUgbn1x63sBp9V3j2Pb1sRMh72bqfL");
+
+pub mod state;
+pub mod instructions;
+pub mod errors;
+pub mod constants;
+
+use instructions::*;
 
 #[program]
-pub mod solescrow {
+pub mod escrow {
     use super::*;
-
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Greetings from: {:?}", ctx.program_id);
-        Ok(())
+    
+    // Utility Instructions
+    pub fn initialize_program(ctx: Context<InitializeProgram>, params: InitializeProgramParams) -> Result<()> {
+        instructions::initialize::initialize_program(ctx, params)
     }
 }
-
-#[derive(Accounts)]
-pub struct Initialize {}
