@@ -1,7 +1,7 @@
 import * as anchor from '@coral-xyz/anchor';
 import { Program } from '@coral-xyz/anchor';
 import { Escrow } from '../target/types/escrow';
-import { PublicKey } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { expect } from 'chai';
 import { EscrowStatus, EscrowTestUtils } from './utils';
 
@@ -117,6 +117,138 @@ describe('AsymEscrow', () => {
                 );
                 expect(escrowAccount.startTime.toNumber()).to.equal(startTime);
                 expect(escrowAccount.endTime.toNumber()).to.equal(endTime);
+            });
+        });
+    });
+
+    describe('Place Payments', () => {
+        let escrow: PublicKey;
+        const amount = LAMPORTS_PER_SOL; // 1 SOL
+
+        beforeEach(async () => {
+            escrow = await testUtils.createAsymEscrow(
+                testUtils.accounts.admin,
+                testUtils.accounts.payer1.publicKey,
+                testUtils.accounts.receiver1.publicKey,
+                amount
+            );
+        });
+
+        describe('Happy Paths', () => {
+            it('can make a payment to native currency escrow', async () => {
+                await testUtils.placePaymentAsym(
+                    testUtils.accounts.payer1,
+                    escrow,
+                    amount / 2 // Partial payment
+                );
+
+                const escrowAccount = await program.account.asymEscrow.fetch(
+                    escrow
+                );
+                expect(escrowAccount.payer.amountPaid.toNumber()).to.equal(
+                    amount / 2
+                );
+                expect(Object.keys(escrowAccount.status)[0]).to.equal('active');
+            });
+
+            it('can make multiple payments', async () => {
+                // First payment
+                await testUtils.placePaymentAsym(
+                    testUtils.accounts.payer1,
+                    escrow,
+                    Math.floor(amount / 3)
+                );
+
+                // Second payment
+                await testUtils.placePaymentAsym(
+                    testUtils.accounts.payer1,
+                    escrow,
+                    Math.floor(amount / 3)
+                );
+
+                const escrowAccount = await program.account.asymEscrow.fetch(
+                    escrow
+                );
+                expect(escrowAccount.payer.amountPaid.toNumber()).to.equal(
+                    Math.floor((amount * 2) / 3)
+                );
+            });
+
+            it('can complete payment and escrow becomes fully paid', async () => {
+                await testUtils.placePaymentAsym(
+                    testUtils.accounts.payer1,
+                    escrow,
+                    amount // Full payment
+                );
+
+                const escrowAccount = await program.account.asymEscrow.fetch(
+                    escrow
+                );
+                expect(escrowAccount.payer.amountPaid.toNumber()).to.equal(
+                    amount
+                );
+                expect(escrowAccount.payer.amountPaid.toNumber()).to.be.gte(
+                    escrowAccount.payer.amount.toNumber()
+                );
+            });
+        });
+
+        describe('Token Payments', () => {
+            let tokenEscrow: PublicKey;
+            const tokenAmount = 1000000; // 1 token (6 decimals)
+
+            beforeEach(async () => {
+                tokenEscrow = await testUtils.createAsymEscrow(
+                    testUtils.accounts.admin,
+                    testUtils.accounts.payer1.publicKey,
+                    testUtils.accounts.receiver1.publicKey,
+                    tokenAmount,
+                    mint
+                );
+            });
+
+            it.skip('can make token payment', async () => {
+                await testUtils.placePaymentAsym(
+                    testUtils.accounts.payer1,
+                    tokenEscrow,
+                    tokenAmount / 2,
+                    mint
+                );
+
+                const escrowAccount = await program.account.asymEscrow.fetch(
+                    tokenEscrow
+                );
+                expect(escrowAccount.payer.amountPaid.toNumber()).to.equal(
+                    tokenAmount / 2
+                );
+            });
+        });
+
+        describe('Validation Tests', () => {
+            it('rejects payment from wrong account', async () => {
+                try {
+                    await testUtils.placePaymentAsym(
+                        testUtils.accounts.payer2, // Wrong payer
+                        escrow,
+                        amount / 2
+                    );
+                    expect.fail('Should have thrown an error');
+                } catch (error) {
+                    expect(error.toString()).to.include('Unauthorized');
+                }
+            });
+
+            it('rejects zero amount payment', async () => {
+                try {
+                    await testUtils.placePaymentAsym(
+                        testUtils.accounts.payer1,
+                        escrow,
+                        0 // Invalid amount
+                    );
+                    expect.fail('Should have thrown an error');
+                } catch (error) {
+                    expect(error.toString()).to.include('InvalidAmount');
+                }
             });
         });
     });

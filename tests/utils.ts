@@ -216,6 +216,41 @@ export class EscrowTestUtils {
         return escrow;
     }
 
+    // Place payment helper
+    async placePaymentAsym(
+        payer: Keypair,
+        escrow: PublicKey,
+        amount: number,
+        currency: PublicKey | null = null
+    ) {
+        const [programConfig] = this.getProgramConfigPDA();
+        const [escrowVault] = this.getEscrowVaultPDA(escrow);
+
+        let payerTokenAccount = null;
+        let escrowTokenAccount = null;
+
+        if (currency) {
+            payerTokenAccount = await this.createTokenAccount(payer.publicKey);
+            escrowTokenAccount = await this.createTokenAccount(escrowVault);
+            await this.mintTokens(payerTokenAccount, amount);
+        }
+
+        await this.program.methods
+            .placePaymentAsym(new anchor.BN(amount))
+            .accounts({
+                payer: payer.publicKey,
+                escrow,
+                programConfig,
+                escrowVault,
+                payerTokenAccount,
+                escrowTokenAccount,
+                tokenProgram: currency ? TOKEN_PROGRAM_ID : null,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([payer])
+            .rpc();
+    }
+
     // Verification helpers
     async verifyAsymEscrow(
         escrowPubkey: PublicKey,
