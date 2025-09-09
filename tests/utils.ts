@@ -163,7 +163,7 @@ export class SolanaEscrowTestUtils {
                 authority: this.accounts.admin.publicKey,
                 programConfig,
                 systemProgram: SystemProgram.programId,
-            })
+            } as any)
             .signers([this.accounts.admin])
             .rpc();
 
