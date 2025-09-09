@@ -154,6 +154,15 @@ export class SolanaEscrowTestUtils {
     async initializeProgramConfig(feeBps: number = 100) {
         const [programConfig] = this.getProgramConfigPDA();
 
+        try {
+            //check if program config already exists
+            await this.program.account.programConfig.fetch(programConfig);
+            //if it exists, skip initialization
+            return programConfig;
+        } catch (error) {
+            //account doesn't exist, proceed with initialization
+        }
+
         await this.program.methods
             .initializeProgram({
                 feeVault: this.accounts.feeVault.publicKey,
