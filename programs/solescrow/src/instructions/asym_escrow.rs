@@ -226,6 +226,189 @@ pub fn place_payment(
     Ok(())
 }
 
+/// Release escrow (consent-based)
+#[derive(Accounts)]
+pub struct ReleaseEscrowAsym<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    
+    #[account(
+        mut,
+        constraint = escrow.status != EscrowStatus::Completed @ EscrowError::InvalidEscrowState,
+        constraint = escrow.status != EscrowStatus::Arbitration @ EscrowError::InvalidEscrowState,
+    )]
+    pub escrow: Account<'info, AsymEscrow>,
+    
+    #[account(
+        seeds = [ProgramConfig::SEED],
+        bump = program_config.bump
+    )]
+    pub program_config: Account<'info, ProgramConfig>,
+    
+    /// Escrow vault
+    #[account(
+        mut,
+        seeds = [seeds::ESCROW_VAULT, escrow.key().as_ref()],
+        bump
+    )]
+    pub escrow_vault: SystemAccount<'info>,
+    
+    /// Receiver account for native transfers
+    #[account(mut)]
+    pub receiver: SystemAccount<'info>,
+    
+    /// Fee vault
+    #[account(mut)]
+    pub fee_vault: SystemAccount<'info>,
+    
+    /// For SPL token transfers
+    #[account(mut)]
+    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
+    
+    #[account(mut)]
+    pub receiver_token_account: Option<Account<'info, TokenAccount>>,
+    
+    #[account(mut)]
+    pub fee_token_account: Option<Account<'info, TokenAccount>>,
+    
+    pub token_program: Option<Program<'info, Token>>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn release_escrow(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
+    require_not_paused(&ctx.accounts.program_config)?;
+    
+    let escrow = &mut ctx.accounts.escrow;
+    
+    // Check authorization (payer or receiver)
+    let is_payer = ctx.accounts.signer.key() == escrow.payer.addr;
+    let is_receiver = ctx.accounts.signer.key() == escrow.receiver.addr;
+    require!(is_payer || is_receiver, EscrowError::Unauthorized);
+    
+    // Check escrow timing
+    require!(escrow.is_active_time(), EscrowError::EscrowNotActive);
+    
+    let remaining_amount = escrow.get_amount_remaining();
+    require!(remaining_amount > 0, EscrowError::InvalidEscrowState);
+    
+    // Record consent
+    if is_payer && !escrow.payer.released {
+        escrow.payer.released = true;
+        emit!(ReleaseAssentGivenEvent {
+            escrow_id: escrow.id,
+            assenting_address: ctx.accounts.signer.key(),
+            assent_type: ReleaseAssentType::Payer,
+        });
+    }
+    
+    if is_receiver && !escrow.receiver.released {
+        escrow.receiver.released = true;
+        emit!(ReleaseAssentGivenEvent {
+            escrow_id: escrow.id,
+            assenting_address: ctx.accounts.signer.key(),
+            assent_type: ReleaseAssentType::Receiver,
+        });
+    }
+    
+    // Execute release if both parties consent
+    if escrow.payer.released && escrow.receiver.released {
+        execute_release(ctx, remaining_amount)?;
+    }
+    
+    Ok(())
+}
+
+// Helper function to execute release
+fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
+    let escrow = &mut ctx.accounts.escrow;
+    
+    // Calculate fee and amount to transfer
+    let (fee, amount_to_transfer) = calculate_fee_and_amount(amount, escrow.fee_bps)?;
+    
+    // Generate signer seeds for escrow vault
+    let escrow_key = escrow.key();
+    let vault_seeds = &[
+        seeds::ESCROW_VAULT,
+        escrow_key.as_ref(),
+        &[ctx.bumps.escrow_vault],
+    ];
+    let vault_signer = &[&vault_seeds[..]];
+    
+    // Transfer funds based on currency type
+    match escrow.payer.currency_type {
+        CurrencyType::Native => {
+            // Transfer to receiver
+            if amount_to_transfer > 0 {
+                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= amount_to_transfer;
+                **ctx.accounts.receiver.to_account_info().try_borrow_mut_lamports()? += amount_to_transfer;
+            }
+            
+            // Transfer fee
+            if fee > 0 {
+                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= fee;
+                **ctx.accounts.fee_vault.to_account_info().try_borrow_mut_lamports()? += fee;
+            }
+        },
+        CurrencyType::SplToken => {
+            let escrow_token_account = ctx.accounts.escrow_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let receiver_token_account = ctx.accounts.receiver_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let token_program = ctx.accounts.token_program
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            
+            // Transfer to receiver
+            if amount_to_transfer > 0 {
+                let cpi_accounts = anchor_spl::token::Transfer {
+                    from: escrow_token_account.to_account_info(),
+                    to: receiver_token_account.to_account_info(),
+                    authority: ctx.accounts.escrow_vault.to_account_info(),
+                };
+                let cpi_program = token_program.to_account_info();
+                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, vault_signer);
+                anchor_spl::token::transfer(cpi_ctx, amount_to_transfer)?;
+            }
+            
+            // Transfer fee
+            if fee > 0 {
+                let fee_token_account = ctx.accounts.fee_token_account
+                    .as_ref()
+                    .ok_or(EscrowError::InvalidToken)?;
+                
+                let cpi_accounts = anchor_spl::token::Transfer {
+                    from: escrow_token_account.to_account_info(),
+                    to: fee_token_account.to_account_info(),
+                    authority: ctx.accounts.escrow_vault.to_account_info(),
+                };
+                let cpi_program = token_program.to_account_info();
+                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, vault_signer);
+                anchor_spl::token::transfer(cpi_ctx, fee)?;
+            }
+        },
+    }
+    
+    // Update escrow state
+    escrow.released = true;
+    escrow.payer.amount_released = escrow.payer.amount_released
+        .checked_add(amount_to_transfer)
+        .ok_or(EscrowError::ArithmeticOverflow)?;
+    
+    if escrow.get_amount_remaining() == 0 {
+        escrow.status = EscrowStatus::Completed;
+    }
+    
+    emit!(EscrowReleasedEvent {
+        escrow_id: escrow.id,
+        amount: amount_to_transfer,
+        fee,
+    });
+    
+    Ok(())
+}
+
 // Helper function to generate escrow ID
 fn generate_escrow_id(creator: &Pubkey, nonce: u64) -> [u8; 32] {
     let mut hasher = anchor_lang::solana_program::hash::Hasher::default();
@@ -257,4 +440,18 @@ pub struct PaymentReceivedEvent {
 pub struct EscrowFullyPaidEvent {
     pub escrow_id: [u8; 32],
     pub total_amount: u64,
+}
+
+#[event]
+pub struct ReleaseAssentGivenEvent {
+    pub escrow_id: [u8; 32],
+    pub assenting_address: Pubkey,
+    pub assent_type: ReleaseAssentType,
+}
+
+#[event]
+pub struct EscrowReleasedEvent {
+    pub escrow_id: [u8; 32],
+    pub amount: u64,
+    pub fee: u64,
 }

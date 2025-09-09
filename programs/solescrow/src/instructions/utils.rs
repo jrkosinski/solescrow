@@ -64,3 +64,26 @@ pub fn require_not_paused(program_config: &ProgramConfig) -> Result<()> {
     require!(!program_config.paused, EscrowError::ProgramPaused);
     Ok(())
 }
+
+/// Calculate fee and remaining amount
+pub fn calculate_fee_and_amount(amount: u64, fee_bps: u16) -> Result<(u64, u64)> {
+    if fee_bps == 0 {
+        return Ok((0, amount));
+    }
+    
+    let fee = amount
+        .checked_mul(fee_bps as u64)
+        .ok_or(EscrowError::ArithmeticOverflow)?
+        .checked_div(BPS_DENOMINATOR)
+        .ok_or(EscrowError::ArithmeticOverflow)?;
+    
+    if fee > amount {
+        return Ok((0, amount));
+    }
+    
+    let amount_to_pay = amount
+        .checked_sub(fee)
+        .ok_or(EscrowError::ArithmeticOverflow)?;
+    
+    Ok((fee, amount_to_pay))
+}

@@ -27,6 +27,10 @@ pub mod escrow {
     pub fn place_payment_asym(ctx: Context<PlacePaymentAsym>, amount: u64) -> Result<()> {
         instructions::asym_escrow::place_payment(ctx, amount)
     }
+
+    pub fn release_escrow_asym(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
+        instructions::asym_escrow::release_escrow(ctx)
+    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,9 @@
 /// Minimum time buffer for end dates (1 hour in seconds)
 pub const MIN_END_TIME_BUFFER: i64 = 3600;
 
+/// Basis points denominator (10000 = 100%)
+pub const BPS_DENOMINATOR: u64 = 10000;
+
 /// Seeds for PDA derivation
 pub mod seeds {
     /// Asymmetric escrow PDA seed
