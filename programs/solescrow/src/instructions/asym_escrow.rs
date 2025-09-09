@@ -26,7 +26,7 @@ pub struct CreateAsymEscrow<'info> {
     #[account(
         init,
         payer = creator,
-        space = 1, //AsymEscrow::space(params.arbiters.len()),
+        space = 8 + std::mem::size_of::<AsymEscrow>(),
         seeds = [seeds::ASYM_ESCROW, creator.key().as_ref(), &params.nonce.to_le_bytes()],
         bump
     )]

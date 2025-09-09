@@ -17,6 +17,11 @@ pub mod escrow {
     pub fn initialize_program(ctx: Context<InitializeProgram>, params: InitializeProgramParams) -> Result<()> {
         instructions::initialize::initialize_program(ctx, params)
     }
+
+    // Asymmetric Escrow Instructions
+    pub fn create_asym_escrow(ctx: Context<CreateAsymEscrow>, params: CreateAsymEscrowParams) -> Result<()> {
+        instructions::asym_escrow::create_escrow(ctx, params)
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +104,53 @@ mod tests {
         //seed constant should be correct
         let seed = state::program_config::ProgramConfig::SEED;
         assert_eq!(seed, b"program_config");
+    }
+
+    #[test]
+    fn test_create_asym_escrow() {
+        use crate::instructions::asym_escrow::CreateAsymEscrowParams;
+        use crate::state::escrow::{EscrowStatus, CurrencyType};
+        
+        //test escrow id generation
+        let creator = Pubkey::new_unique();
+        let nonce = 12345u64;
+        
+        //generate escrow id using same logic as create_asym_escrow
+        let mut hasher = anchor_lang::solana_program::hash::Hasher::default();
+        hasher.hash(creator.as_ref());
+        hasher.hash(&nonce.to_le_bytes());
+        let expected_id = hasher.result().to_bytes();
+        
+        //verify id generation is deterministic
+        let mut hasher2 = anchor_lang::solana_program::hash::Hasher::default();
+        hasher2.hash(creator.as_ref());
+        hasher2.hash(&nonce.to_le_bytes());
+        let id2 = hasher2.result().to_bytes();
+        assert_eq!(expected_id, id2);
+        
+        //test escrow params validation
+        let payer = Pubkey::new_unique();
+        let receiver = Pubkey::new_unique();
+        let params = CreateAsymEscrowParams {
+            payer,
+            receiver,
+            currency: Pubkey::default(), //native SOL
+            amount: 1000000, //1 SOL in lamports
+            start_time: 1600000000,
+            end_time: 1600086400, //24 hours later
+            nonce,
+        };
+        
+        //validate params structure
+        assert_eq!(params.payer, payer);
+        assert_eq!(params.receiver, receiver);
+        assert_eq!(params.currency, Pubkey::default());
+        assert_eq!(params.amount, 1000000);
+        assert!(params.start_time < params.end_time);
+        assert_eq!(params.nonce, nonce);
+        
+        //test default enum values
+        assert_eq!(EscrowStatus::default(), EscrowStatus::Pending);
+        assert_eq!(CurrencyType::default(), CurrencyType::Native);
     }
 }

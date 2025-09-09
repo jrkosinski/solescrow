@@ -25,10 +25,10 @@ export const PROGRAM_CONFIG_SEED = 'program_config';
 export const ESCROW_VAULT_SEED = 'escrow_vault';
 
 export enum EscrowStatus {
-    Pending = 0,
-    Active = 1,
-    Completed = 2,
-    Arbitration = 3,
+    Pending = 'pending',
+    Active = 'active',
+    Completed = 'completed',
+    Arbitration = 'arbitration',
 }
 
 export interface TestAccounts {
@@ -40,7 +40,7 @@ export interface TestAccounts {
     feeVault: Keypair;
 }
 
-export class SolanaEscrowTestUtils {
+export class EscrowTestUtils {
     program: Program<Escrow>;
     provider: anchor.AnchorProvider;
     accounts: TestAccounts;
@@ -177,5 +177,82 @@ export class SolanaEscrowTestUtils {
             .rpc();
 
         return programConfig;
+    }
+
+    // Create asymmetric escrow helper
+    async createAsymEscrow(
+        creator: Keypair,
+        payer: PublicKey,
+        receiver: PublicKey,
+        amount: number,
+        currency: PublicKey | null = null,
+        nonce: number = Date.now()
+    ) {
+        const [escrow] = this.getAsymEscrowPDA(creator.publicKey, nonce);
+        const [programConfig] = this.getProgramConfigPDA();
+
+        const params = {
+            payer,
+            receiver,
+            currency: currency || PublicKey.default,
+            amount: new anchor.BN(amount),
+            startTime: new anchor.BN(0),
+            endTime: new anchor.BN(0),
+            nonce: new anchor.BN(nonce),
+        };
+
+        await this.program.methods
+            .createAsymEscrow(params)
+            .accounts({
+                creator: creator.publicKey,
+                escrow,
+                programConfig,
+                tokenMint: currency,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([creator])
+            .rpc();
+
+        return escrow;
+    }
+
+    // Verification helpers
+    async verifyAsymEscrow(
+        escrowPubkey: PublicKey,
+        expected: {
+            payer?: PublicKey;
+            receiver?: PublicKey;
+            amount?: number;
+            currency?: PublicKey;
+            status?: EscrowStatus;
+        }
+    ) {
+        const escrow = await this.program.account.asymEscrow.fetch(
+            escrowPubkey
+        );
+
+        if (expected.payer) {
+            expect(escrow.payer.addr.toString()).to.equal(
+                expected.payer.toString()
+            );
+        }
+        if (expected.receiver) {
+            expect(escrow.receiver.addr.toString()).to.equal(
+                expected.receiver.toString()
+            );
+        }
+        if (expected.amount !== undefined) {
+            expect(escrow.payer.amount.toNumber()).to.equal(expected.amount);
+        }
+        if (expected.currency) {
+            expect(escrow.payer.currency.toString()).to.equal(
+                expected.currency.toString()
+            );
+        }
+        if (expected.status !== undefined) {
+            expect(Object.keys(escrow.status)[0]).to.equal(
+                expected.status.toLowerCase()
+            );
+        }
     }
 }
