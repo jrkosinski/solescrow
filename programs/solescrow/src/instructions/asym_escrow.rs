@@ -50,13 +50,13 @@ pub fn create_escrow(
 ) -> Result<()> {
     require_not_paused(&ctx.accounts.program_config)?;
     
-    // Validate inputs
+    //validate inputs
     require!(params.payer != Pubkey::default(), EscrowError::InvalidPayer);
     require!(params.receiver != Pubkey::default(), EscrowError::InvalidReceiver);
     require!(params.payer != params.receiver, EscrowError::InvalidReceiver);
     require!(params.amount > 0, EscrowError::InvalidAmount);
     
-    // Validate currency
+    //validate currency
     if params.currency != Pubkey::default() {
         require!(
             ctx.accounts.token_mint.is_some(),
@@ -64,10 +64,10 @@ pub fn create_escrow(
         );
     }
     
-    // Validate dates
+    //validate dates
     validate_escrow_dates(params.start_time, params.end_time)?;
     
-    // Initialize escrow
+    //initialize escrow
     let escrow = &mut ctx.accounts.escrow;
     let escrow_id = generate_escrow_id(&ctx.accounts.creator.key(), params.nonce);
     
@@ -154,22 +154,22 @@ pub fn place_payment(
     
     let escrow = &mut ctx.accounts.escrow;
     
-    // Validate payer
+    //validate payer
     require!(
         ctx.accounts.payer.key() == escrow.payer.addr,
         EscrowError::Unauthorized
     );
     
-    // Check escrow timing
+    //check escrow timing
     require!(escrow.is_active_time(), EscrowError::EscrowNotActive);
     
-    // Validate amount
+    //validate amount
     require!(amount > 0, EscrowError::InvalidAmount);
     
-    // Transfer payment based on currency type
+    //transfer payment based on currency type
     match escrow.payer.currency_type {
         CurrencyType::Native => {
-            // Transfer SOL to escrow vault
+            //transfer SOL to escrow vault
             transfer_native_sol(
                 ctx.accounts.payer.to_account_info(),
                 ctx.accounts.escrow_vault.to_account_info(),
@@ -178,7 +178,7 @@ pub fn place_payment(
             )?;
         },
         CurrencyType::SplToken => {
-            // Transfer SPL tokens to escrow token account
+            //transfer SPL tokens to escrow token account
             let payer_token_account = ctx.accounts.payer_token_account
                 .as_ref()
                 .ok_or(EscrowError::InvalidToken)?;
@@ -199,13 +199,13 @@ pub fn place_payment(
         },
     }
     
-    // Update escrow state
+    //update escrow state
     escrow.status = EscrowStatus::Active;
     escrow.payer.amount_paid = escrow.payer.amount_paid
         .checked_add(amount)
         .ok_or(EscrowError::ArithmeticOverflow)?;
     
-    // Check if fully paid
+    //check if fully paid
     let is_fully_paid = escrow.payer.amount_paid >= escrow.payer.amount;
     
     emit!(PaymentReceivedEvent {
@@ -280,18 +280,18 @@ pub fn release_escrow(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
     
     let escrow = &mut ctx.accounts.escrow;
     
-    // Check authorization (payer or receiver)
+    //check authorization (payer or receiver)
     let is_payer = ctx.accounts.signer.key() == escrow.payer.addr;
     let is_receiver = ctx.accounts.signer.key() == escrow.receiver.addr;
     require!(is_payer || is_receiver, EscrowError::Unauthorized);
     
-    // Check escrow timing
+    //check escrow timing
     require!(escrow.is_active_time(), EscrowError::EscrowNotActive);
     
     let remaining_amount = escrow.get_amount_remaining();
     require!(remaining_amount > 0, EscrowError::InvalidEscrowState);
     
-    // Record consent
+    //record consent
     if is_payer && !escrow.payer.released {
         escrow.payer.released = true;
         emit!(ReleaseAssentGivenEvent {
@@ -310,7 +310,7 @@ pub fn release_escrow(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
         });
     }
     
-    // Execute release if both parties consent
+    //execute release if both parties consent
     if escrow.payer.released && escrow.receiver.released {
         execute_release(ctx, remaining_amount)?;
     }
@@ -318,14 +318,79 @@ pub fn release_escrow(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
     Ok(())
 }
 
-// Helper function to execute release
+/// Release escrow (consent-based)
+#[derive(Accounts)]
+pub struct RefundEscrowAsym<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    
+    #[account(
+        mut,
+        constraint = escrow.status != EscrowStatus::Completed @ EscrowError::InvalidEscrowState,
+        constraint = escrow.status != EscrowStatus::Arbitration @ EscrowError::InvalidEscrowState,
+    )]
+    pub escrow: Account<'info, AsymEscrow>,
+    
+    #[account(
+        seeds = [ProgramConfig::SEED],
+        bump = program_config.bump
+    )]
+    pub program_config: Account<'info, ProgramConfig>,
+    
+    /// Escrow vault
+    #[account(
+        mut,
+        seeds = [seeds::ESCROW_VAULT, escrow.key().as_ref()],
+        bump
+    )]
+    pub escrow_vault: SystemAccount<'info>,
+    
+    /// Payer account for refunds
+    #[account(mut)]
+    pub payer: SystemAccount<'info>,
+    
+    /// For SPL token refunds
+    #[account(mut)]
+    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
+    
+    #[account(mut)]
+    pub payer_token_account: Option<Account<'info, TokenAccount>>,
+    
+    pub token_program: Option<Program<'info, Token>>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn refund_escrow(ctx: Context<RefundEscrowAsym>, amount: u64) -> Result<()> {
+    require_not_paused(&ctx.accounts.program_config)?;
+    
+    let escrow = &mut ctx.accounts.escrow;
+    
+    //check authorization (receiver)
+    require!(ctx.accounts.signer.key() == escrow.receiver.addr, EscrowError::Unauthorized);
+    
+    //check escrow timing
+    require!(escrow.is_active_time(), EscrowError::EscrowNotActive);
+
+    //validate refund amount
+    let remaining_amount = escrow.get_amount_remaining();
+    require!(remaining_amount >= amount, EscrowError::AmountExceeded);
+    require!(amount > 0, EscrowError::InvalidAmount);
+    require!(!escrow.released, EscrowError::AlreadyReleased);
+
+    //execute refund
+    execute_refund(ctx, amount);
+
+    Ok(())
+}
+
+//helper function to execute release
 fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow;
     
-    // Calculate fee and amount to transfer
+    //calculate fee and amount to transfer
     let (fee, amount_to_transfer) = calculate_fee_and_amount(amount, escrow.fee_bps)?;
     
-    // Generate signer seeds for escrow vault
+    //generate signer seeds for escrow vault
     let escrow_key = escrow.key();
     let vault_seeds = &[
         seeds::ESCROW_VAULT,
@@ -334,16 +399,16 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
     ];
     let vault_signer = &[&vault_seeds[..]];
     
-    // Transfer funds based on currency type
+    //transfer funds based on currency type
     match escrow.payer.currency_type {
         CurrencyType::Native => {
-            // Transfer to receiver
+            //transfer to receiver
             if amount_to_transfer > 0 {
                 **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= amount_to_transfer;
                 **ctx.accounts.receiver.to_account_info().try_borrow_mut_lamports()? += amount_to_transfer;
             }
             
-            // Transfer fee
+            //transfer fee
             if fee > 0 {
                 **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= fee;
                 **ctx.accounts.fee_vault.to_account_info().try_borrow_mut_lamports()? += fee;
@@ -360,7 +425,7 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
                 .as_ref()
                 .ok_or(EscrowError::InvalidToken)?;
             
-            // Transfer to receiver
+            //transfer to receiver
             if amount_to_transfer > 0 {
                 let cpi_accounts = anchor_spl::token::Transfer {
                     from: escrow_token_account.to_account_info(),
@@ -372,7 +437,7 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
                 anchor_spl::token::transfer(cpi_ctx, amount_to_transfer)?;
             }
             
-            // Transfer fee
+            //transfer fee
             if fee > 0 {
                 let fee_token_account = ctx.accounts.fee_token_account
                     .as_ref()
@@ -390,7 +455,7 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
         },
     }
     
-    // Update escrow state
+    //update escrow state
     escrow.released = true;
     escrow.payer.amount_released = escrow.payer.amount_released
         .checked_add(amount_to_transfer)
@@ -400,6 +465,7 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
         escrow.status = EscrowStatus::Completed;
     }
     
+    //emit event
     emit!(EscrowReleasedEvent {
         escrow_id: escrow.id,
         amount: amount_to_transfer,
@@ -409,7 +475,72 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
     Ok(())
 }
 
-// Helper function to generate escrow ID
+fn execute_refund(ctx: Context<RefundEscrowAsym>, amount: u64) -> Result<()> {
+    let escrow = &mut ctx.accounts.escrow;
+
+    // Generate signer seeds for escrow vault
+    let escrow_key = escrow.key();
+    let vault_seeds = &[
+        seeds::ESCROW_VAULT,
+        escrow_key.as_ref(),
+        &[ctx.bumps.escrow_vault],
+    ];
+    let vault_signer = &[&vault_seeds[..]];
+
+    //transfer funds based on currency type
+    match escrow.payer.currency_type {
+        CurrencyType::Native => {
+            //transfer to payer
+            if amount > 0 {
+                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= amount;
+                **ctx.accounts.payer.to_account_info().try_borrow_mut_lamports()? += amount;
+            }
+        },
+
+        CurrencyType::SplToken => {
+            let escrow_token_account = ctx.accounts.escrow_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let payer_token_account = ctx.accounts.payer_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let token_program = ctx.accounts.token_program
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            
+            //transfer to payer
+            if amount > 0 {
+                let cpi_accounts = anchor_spl::token::Transfer {
+                    from: escrow_token_account.to_account_info(),
+                    to: payer_token_account.to_account_info(),
+                    authority: ctx.accounts.escrow_vault.to_account_info(),
+                };
+                let cpi_program = token_program.to_account_info();
+                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, vault_signer);
+                anchor_spl::token::transfer(cpi_ctx, amount)?;
+            }
+        },
+    }
+    
+    //update escrow state
+    escrow.payer.amount_refunded = escrow.payer.amount_refunded
+        .checked_add(amount)
+        .ok_or(EscrowError::ArithmeticOverflow)?;
+    
+    if escrow.get_amount_remaining() == 0 {
+        escrow.status = EscrowStatus::Completed;
+    }
+    
+    //emit event
+    emit!(EscrowRefundedEvent {
+        escrow_id: escrow.id,
+        amount,
+    });
+    
+    Ok(())
+}
+
+//helper function to generate escrow ID
 fn generate_escrow_id(creator: &Pubkey, nonce: u64) -> [u8; 32] {
     let mut hasher = anchor_lang::solana_program::hash::Hasher::default();
     hasher.hash(creator.as_ref());
@@ -417,7 +548,7 @@ fn generate_escrow_id(creator: &Pubkey, nonce: u64) -> [u8; 32] {
     hasher.result().to_bytes()
 }
 
-// Events
+//events
 #[event]
 pub struct EscrowCreatedEvent {
     pub escrow_id: [u8; 32],
@@ -454,4 +585,10 @@ pub struct EscrowReleasedEvent {
     pub escrow_id: [u8; 32],
     pub amount: u64,
     pub fee: u64,
+}
+
+#[event]
+pub struct EscrowRefundedEvent {
+    pub escrow_id: [u8; 32],
+    pub amount: u64,
 }

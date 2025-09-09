@@ -16,6 +16,9 @@ pub enum EscrowError {
     
     #[msg("Invalid amount")]
     InvalidAmount,
+    
+    #[msg("Amount exceeded")]
+    AmountExceeded,
 
     #[msg("Program is paused")]
     ProgramPaused,
@@ -43,4 +46,7 @@ pub enum EscrowError {
     
     #[msg("Unauthorized")]
     Unauthorized,
+    
+    #[msg("Already released")]
+    AlreadyReleased,
 }

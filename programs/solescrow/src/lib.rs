@@ -13,12 +13,12 @@ use instructions::*;
 pub mod escrow {
     use super::*;
     
-    // Utility Instructions
+    //utility instructions
     pub fn initialize_program(ctx: Context<InitializeProgram>, params: InitializeProgramParams) -> Result<()> {
         instructions::initialize::initialize_program(ctx, params)
     }
 
-    // Asymmetric Escrow Instructions
+    //asymmetric escrow instructions
     //TODO: rename to create_escrow_asym
     pub fn create_asym_escrow(ctx: Context<CreateAsymEscrow>, params: CreateAsymEscrowParams) -> Result<()> {
         instructions::asym_escrow::create_escrow(ctx, params)
