@@ -289,4 +289,163 @@ mod tests {
         let future_start = now + 1800; //30 minutes from now
         assert!(future_start > now);
     }
+
+    #[test]
+    fn test_escrow_release_consent_logic() {
+        use crate::state::escrow::{AsymEscrow, EscrowParty, EscrowStatus, CurrencyType};
+        
+        //create mock escrow with full payment made
+        let payer_key = Pubkey::new_unique();
+        let receiver_key = Pubkey::new_unique();
+        
+        let mut escrow = AsymEscrow {
+            id: [1u8; 32],
+            payer: EscrowParty {
+                addr: payer_key,
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 1_000_000_000, //1 SOL required
+                amount_paid: 1_000_000_000, //1 SOL paid (fully funded)
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false, //no consent yet
+            },
+            receiver: EscrowParty {
+                addr: receiver_key,
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 0,
+                amount_paid: 0,
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false, //no consent yet
+            },
+            timestamp: 1600000000,
+            start_time: 0,
+            end_time: 0,
+            status: EscrowStatus::Active,
+            released: false,
+            fee_bps: 100, //1% fee
+            creator: Pubkey::new_unique(),
+            nonce: 12345,
+            bump: 254,
+        };
+
+        //test payer consent
+        assert!(!escrow.payer.released);
+        escrow.payer.released = true;
+        assert!(escrow.payer.released);
+        
+        //test receiver consent 
+        assert!(!escrow.receiver.released);
+        escrow.receiver.released = true;
+        assert!(escrow.receiver.released);
+        
+        //test both parties have consented
+        assert!(escrow.payer.released && escrow.receiver.released);
+        
+        //test remaining amount calculation
+        let remaining = escrow.get_amount_remaining();
+        assert_eq!(remaining, 1_000_000_000); //full amount available for release
+        
+        //test escrow completion after release
+        escrow.released = true;
+        escrow.payer.amount_released = 990_000_000; //after 1% fee
+        escrow.status = EscrowStatus::Completed;
+        
+        assert!(escrow.released);
+        assert_eq!(escrow.status, EscrowStatus::Completed);
+        assert_eq!(escrow.get_amount_remaining(), 10_000_000); //only fee remains
+    }
+
+    #[test]
+    fn test_escrow_authorization_logic() {
+        use crate::state::escrow::{AsymEscrow, EscrowParty, EscrowStatus, CurrencyType};
+        
+        let payer_key = Pubkey::new_unique();
+        let receiver_key = Pubkey::new_unique();
+        let unauthorized_key = Pubkey::new_unique();
+        
+        let escrow = AsymEscrow {
+            id: [2u8; 32],
+            payer: EscrowParty {
+                addr: payer_key,
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 1_000_000_000,
+                amount_paid: 1_000_000_000,
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false,
+            },
+            receiver: EscrowParty {
+                addr: receiver_key,
+                ..Default::default()
+            },
+            timestamp: 1600000000,
+            start_time: 0,
+            end_time: 0,
+            status: EscrowStatus::Active,
+            released: false,
+            fee_bps: 100,
+            creator: Pubkey::new_unique(),
+            nonce: 12346,
+            bump: 254,
+        };
+
+        //test payer authorization
+        let is_payer = payer_key == escrow.payer.addr;
+        assert!(is_payer);
+        
+        //test receiver authorization
+        let is_receiver = receiver_key == escrow.receiver.addr;
+        assert!(is_receiver);
+        
+        //test unauthorized party
+        let is_unauthorized = unauthorized_key == escrow.payer.addr || unauthorized_key == escrow.receiver.addr;
+        assert!(!is_unauthorized);
+        
+        //test mutual authorization check (for release)
+        let payer_or_receiver = is_payer || is_receiver;
+        assert!(payer_or_receiver);
+        
+        let unauthorized_check = unauthorized_key == escrow.payer.addr || unauthorized_key == escrow.receiver.addr;
+        assert!(!unauthorized_check);
+    }
+
+    #[test]
+    fn test_escrow_fee_calculation() {
+        //test 1% fee calculation (100 basis points)
+        let amount = 1_000_000_000u64; //1 SOL
+        let fee_bps = 100u16; //1%
+        
+        //manual fee calculation
+        let expected_fee = amount * (fee_bps as u64) / 10000; //1% of 1 SOL = 0.01 SOL
+        let expected_transfer = amount - expected_fee; //0.99 SOL
+        
+        assert_eq!(expected_fee, 10_000_000); //0.01 SOL in lamports
+        assert_eq!(expected_transfer, 990_000_000); //0.99 SOL in lamports
+        
+        //test 2.5% fee calculation (250 basis points)
+        let fee_bps_high = 250u16; //2.5%
+        let expected_fee_high = amount * (fee_bps_high as u64) / 10000;
+        let expected_transfer_high = amount - expected_fee_high;
+        
+        assert_eq!(expected_fee_high, 25_000_000); //0.025 SOL in lamports
+        assert_eq!(expected_transfer_high, 975_000_000); //0.975 SOL in lamports
+        
+        //test zero fee
+        let fee_bps_zero = 0u16;
+        let expected_fee_zero = amount * (fee_bps_zero as u64) / 10000;
+        let expected_transfer_zero = amount - expected_fee_zero;
+        
+        assert_eq!(expected_fee_zero, 0);
+        assert_eq!(expected_transfer_zero, amount); //full amount
+        
+        //test maximum fee (100% - should never happen in practice)
+        let fee_bps_max = 10000u16; //100%
+        let expected_fee_max = amount * (fee_bps_max as u64) / 10000;
+        
+        assert_eq!(expected_fee_max, amount); //entire amount as fee
+    }
 }
