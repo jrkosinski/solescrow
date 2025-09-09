@@ -26,7 +26,7 @@ pub struct CreateAsymEscrow<'info> {
     #[account(
         init,
         payer = creator,
-        space = 8 + std::mem::size_of::<AsymEscrow>(),
+        space = AsymEscrow::space(),
         seeds = [seeds::ASYM_ESCROW, creator.key().as_ref(), &params.nonce.to_le_bytes()],
         bump
     )]
@@ -108,6 +108,123 @@ pub fn create_escrow(
     Ok(())
 }
 
+/// Place payment in asymmetric escrow
+#[derive(Accounts)]
+pub struct PlacePaymentAsym<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    
+    #[account(
+        mut,
+        constraint = escrow.status != EscrowStatus::Completed @ EscrowError::InvalidEscrowState,
+        constraint = escrow.status != EscrowStatus::Arbitration @ EscrowError::InvalidEscrowState,
+    )]
+    pub escrow: Account<'info, AsymEscrow>,
+    
+    #[account(
+        seeds = [ProgramConfig::SEED],
+        bump = program_config.bump
+    )]
+    pub program_config: Account<'info, ProgramConfig>,
+    
+    /// Escrow vault to hold funds
+    #[account(
+        mut,
+        seeds = [seeds::ESCROW_VAULT, escrow.key().as_ref()],
+        bump
+    )]
+    pub escrow_vault: SystemAccount<'info>,
+    
+    /// For SPL token payments
+    #[account(mut)]
+    pub payer_token_account: Option<Account<'info, TokenAccount>>,
+    
+    #[account(mut)]
+    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
+    
+    pub token_program: Option<Program<'info, Token>>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn place_payment(
+    ctx: Context<PlacePaymentAsym>,
+    amount: u64,
+) -> Result<()> {
+    require_not_paused(&ctx.accounts.program_config)?;
+    
+    let escrow = &mut ctx.accounts.escrow;
+    
+    // Validate payer
+    require!(
+        ctx.accounts.payer.key() == escrow.payer.addr,
+        EscrowError::Unauthorized
+    );
+    
+    // Check escrow timing
+    require!(escrow.is_active_time(), EscrowError::EscrowNotActive);
+    
+    // Validate amount
+    require!(amount > 0, EscrowError::InvalidAmount);
+    
+    // Transfer payment based on currency type
+    match escrow.payer.currency_type {
+        CurrencyType::Native => {
+            // Transfer SOL to escrow vault
+            transfer_native_sol(
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.escrow_vault.to_account_info(),
+                amount,
+                ctx.accounts.system_program.to_account_info(),
+            )?;
+        },
+        CurrencyType::SplToken => {
+            // Transfer SPL tokens to escrow token account
+            let payer_token_account = ctx.accounts.payer_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let escrow_token_account = ctx.accounts.escrow_token_account
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            let token_program = ctx.accounts.token_program
+                .as_ref()
+                .ok_or(EscrowError::InvalidToken)?;
+            
+            transfer_spl_tokens(
+                payer_token_account,
+                escrow_token_account,
+                &ctx.accounts.payer,
+                amount,
+                token_program,
+            )?;
+        },
+    }
+    
+    // Update escrow state
+    escrow.status = EscrowStatus::Active;
+    escrow.payer.amount_paid = escrow.payer.amount_paid
+        .checked_add(amount)
+        .ok_or(EscrowError::ArithmeticOverflow)?;
+    
+    // Check if fully paid
+    let is_fully_paid = escrow.payer.amount_paid >= escrow.payer.amount;
+    
+    emit!(PaymentReceivedEvent {
+        escrow_id: escrow.id,
+        payer: ctx.accounts.payer.key(),
+        amount,
+        total_paid: escrow.payer.amount_paid,
+        fully_paid: is_fully_paid,
+    });
+    
+    if is_fully_paid {
+        emit!(EscrowFullyPaidEvent {
+            escrow_id: escrow.id,
+            total_amount: escrow.payer.amount_paid,
+        });
+    }
+    
+    Ok(())
+}
 
 // Helper function to generate escrow ID
 fn generate_escrow_id(creator: &Pubkey, nonce: u64) -> [u8; 32] {
@@ -125,4 +242,19 @@ pub struct EscrowCreatedEvent {
     pub payer: Pubkey,
     pub receiver: Pubkey,
     pub amount: u64,
+}
+
+#[event]
+pub struct PaymentReceivedEvent {
+    pub escrow_id: [u8; 32],
+    pub payer: Pubkey,
+    pub amount: u64,
+    pub total_paid: u64,
+    pub fully_paid: bool,
+}
+
+#[event]
+pub struct EscrowFullyPaidEvent {
+    pub escrow_id: [u8; 32],
+    pub total_amount: u64,
 }

@@ -98,3 +98,48 @@ pub struct AsymEscrow {
     /// Bump seed for PDA
     pub bump: u8,
 }
+
+impl AsymEscrow {
+    /// Calculate space needed for account
+    pub const fn space() -> usize {
+        8 + // discriminator
+        32 + // id
+        200 + // payer (EscrowParty)
+        200 + // receiver (EscrowParty)
+        8 + // timestamp
+        8 + // start_time
+        8 + // end_time
+        1 + // status
+        1 + // released
+        2 + // fee_bps
+        32 + // creator
+        8 + // nonce
+        1 // bump
+    }
+
+    /// Get remaining escrow amount
+    pub fn get_amount_remaining(&self) -> u64 {
+        self.payer.amount_paid
+            .saturating_sub(self.payer.amount_refunded)
+            .saturating_sub(self.payer.amount_released)
+    }
+
+    /// Check if escrow is within valid time window
+    pub fn is_active_time(&self) -> bool {
+        let now = Clock::get().unwrap().unix_timestamp;
+        
+        let start_valid = if self.start_time > 0 {
+            now >= self.start_time
+        } else {
+            true
+        };
+
+        let end_valid = if self.end_time > 0 {
+            now <= self.end_time
+        } else {
+            true
+        };
+
+        start_valid && end_valid
+    }
+}

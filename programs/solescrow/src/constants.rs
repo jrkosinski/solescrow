@@ -10,4 +10,7 @@ pub mod seeds {
     
     /// Program config PDA seed
     pub const PROGRAM_CONFIG: &[u8] = b"program_config";
+    
+    /// Escrow vault PDA seed
+    pub const ESCROW_VAULT: &[u8] = b"escrow_vault";
 }

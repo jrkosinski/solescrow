@@ -19,8 +19,13 @@ pub mod escrow {
     }
 
     // Asymmetric Escrow Instructions
+    //TODO: rename to create_escrow_asym
     pub fn create_asym_escrow(ctx: Context<CreateAsymEscrow>, params: CreateAsymEscrowParams) -> Result<()> {
         instructions::asym_escrow::create_escrow(ctx, params)
+    }
+
+    pub fn place_payment_asym(ctx: Context<PlacePaymentAsym>, amount: u64) -> Result<()> {
+        instructions::asym_escrow::place_payment(ctx, amount)
     }
 }
 
