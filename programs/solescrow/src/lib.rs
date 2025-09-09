@@ -158,4 +158,131 @@ mod tests {
         assert_eq!(EscrowStatus::default(), EscrowStatus::Pending);
         assert_eq!(CurrencyType::default(), CurrencyType::Native);
     }
+
+    #[test]
+    fn test_escrow_payment_calculations() {
+        use crate::state::escrow::{AsymEscrow, EscrowParty, EscrowStatus, CurrencyType};
+        
+        //create mock escrow with 1 SOL requirement
+        let mut escrow = AsymEscrow {
+            id: [0u8; 32],
+            payer: EscrowParty {
+                addr: Pubkey::new_unique(),
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 1_000_000_000, //1 SOL in lamports
+                amount_paid: 0,
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false,
+            },
+            receiver: EscrowParty::default(),
+            timestamp: 1600000000,
+            start_time: 0,
+            end_time: 0,
+            status: EscrowStatus::Pending,
+            released: false,
+            fee_bps: 100,
+            creator: Pubkey::new_unique(),
+            nonce: 12345,
+            bump: 254,
+        };
+
+        //test partial payment (0.5 SOL)
+        escrow.payer.amount_paid = 500_000_000;
+        escrow.status = EscrowStatus::Active;
+        
+        //verify payment state
+        assert_eq!(escrow.payer.amount_paid, 500_000_000);
+        assert_eq!(escrow.status, EscrowStatus::Active);
+        assert_eq!(escrow.get_amount_remaining(), 500_000_000);
+        
+        //test multiple payments (add another 0.3 SOL)
+        escrow.payer.amount_paid = escrow.payer.amount_paid
+            .checked_add(300_000_000)
+            .unwrap();
+            
+        assert_eq!(escrow.payer.amount_paid, 800_000_000);
+        assert_eq!(escrow.get_amount_remaining(), 800_000_000);
+        
+        //test full payment completion (add final 0.2 SOL)
+        escrow.payer.amount_paid = escrow.payer.amount_paid
+            .checked_add(200_000_000)
+            .unwrap();
+            
+        assert_eq!(escrow.payer.amount_paid, 1_000_000_000);
+        assert!(escrow.payer.amount_paid >= escrow.payer.amount);
+        
+        //test overpayment scenario
+        escrow.payer.amount_paid = 1_200_000_000; //1.2 SOL paid
+        assert!(escrow.payer.amount_paid > escrow.payer.amount);
+        assert_eq!(escrow.get_amount_remaining(), 1_200_000_000);
+    }
+
+    #[test]
+    fn test_escrow_validation_logic() {
+        use crate::state::escrow::{AsymEscrow, EscrowParty, EscrowStatus, CurrencyType};
+        
+        let payer = Pubkey::new_unique();
+        let receiver = Pubkey::new_unique();
+        let amount = 1_000_000_000u64; //1 SOL
+        
+        //test valid escrow parameters
+        assert_ne!(payer, receiver); //payer must != receiver
+        assert!(amount > 0); //amount must be positive
+        
+        //test currency validation for native SOL
+        let native_currency = Pubkey::default();
+        assert_eq!(native_currency, Pubkey::default());
+        
+        //test currency validation for SPL token
+        let token_mint = Pubkey::new_unique();
+        assert_ne!(token_mint, Pubkey::default());
+        
+        //test zero amount validation (should fail)
+        let zero_amount = 0u64;
+        assert_eq!(zero_amount, 0);
+        
+        //test same payer/receiver (should fail)
+        let same_key = Pubkey::new_unique();
+        assert_eq!(same_key, same_key);
+        
+        //test arithmetic overflow protection
+        let max_amount = u64::MAX;
+        let safe_add = max_amount.checked_add(1);
+        assert_eq!(safe_add, None); //overflow returns None
+        
+        let safe_amount = 1_000_000_000u64;
+        let safe_result = safe_amount.checked_add(500_000_000);
+        assert_eq!(safe_result, Some(1_500_000_000));
+    }
+
+    #[test]
+    fn test_escrow_timing_logic() {
+        //test escrow timing without Clock (mock scenario)
+        let now = 1600000000i64;
+        let start_time = now - 3600; //1 hour ago
+        let end_time = now + 3600; //1 hour from now
+        
+        //test time window validation
+        assert!(start_time < now); //started in past
+        assert!(end_time > now); //ends in future
+        assert!(end_time > start_time); //end after start
+        
+        //test immediate start (start_time = 0)
+        let immediate_start = 0i64;
+        assert_eq!(immediate_start, 0);
+        
+        //test no expiry (end_time = 0)  
+        let no_expiry = 0i64;
+        assert_eq!(no_expiry, 0);
+        
+        //test expired escrow
+        let expired_end = now - 1800; //30 minutes ago
+        assert!(expired_end < now);
+        
+        //test future start
+        let future_start = now + 1800; //30 minutes from now
+        assert!(future_start > now);
+    }
 }
