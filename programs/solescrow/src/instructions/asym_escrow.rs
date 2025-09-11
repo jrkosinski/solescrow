@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 use anchor_spl::token::{Token, TokenAccount, Mint};
 use crate::state::*;
 use crate::errors::*;
@@ -402,17 +403,23 @@ fn execute_release(ctx: Context<ReleaseEscrowAsym>, amount: u64) -> Result<()> {
     //transfer funds based on currency type
     match escrow.payer.currency_type {
         CurrencyType::Native => {
-            //transfer to receiver
-            if amount_to_transfer > 0 {
-                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= amount_to_transfer;
-                **ctx.accounts.receiver.to_account_info().try_borrow_mut_lamports()? += amount_to_transfer;
+
+            //transfer to receiver using system program CPI
+            if amount > 0 {
+                let cpi_accounts = system_program::Transfer {
+                    from: ctx.accounts.escrow_vault.to_account_info(),
+                    to: ctx.accounts.receiver.to_account_info(),
+                };
+                let cpi_program = ctx.accounts.system_program.to_account_info();
+                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, vault_signer);
+                system_program::transfer(cpi_ctx, amount)?;
             }
             
             //transfer fee
-            if fee > 0 {
-                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= fee;
-                **ctx.accounts.fee_vault.to_account_info().try_borrow_mut_lamports()? += fee;
-            }
+           // if fee > 0 {
+            //    **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= fee;
+            //    **ctx.accounts.fee_vault.to_account_info().try_borrow_mut_lamports()? += fee;
+            //}
         },
         CurrencyType::SplToken => {
             let escrow_token_account = ctx.accounts.escrow_token_account
@@ -490,10 +497,15 @@ fn execute_refund(ctx: Context<RefundEscrowAsym>, amount: u64) -> Result<()> {
     //transfer funds based on currency type
     match escrow.payer.currency_type {
         CurrencyType::Native => {
-            //transfer to payer
+            //transfer to payer using system program CPI
             if amount > 0 {
-                **ctx.accounts.escrow_vault.to_account_info().try_borrow_mut_lamports()? -= amount;
-                **ctx.accounts.payer.to_account_info().try_borrow_mut_lamports()? += amount;
+                let cpi_accounts = system_program::Transfer {
+                    from: ctx.accounts.escrow_vault.to_account_info(),
+                    to: ctx.accounts.payer.to_account_info(),
+                };
+                let cpi_program = ctx.accounts.system_program.to_account_info();
+                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, vault_signer);
+                system_program::transfer(cpi_ctx, amount)?;
             }
         },
 

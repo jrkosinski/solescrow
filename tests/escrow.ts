@@ -252,4 +252,179 @@ describe('AsymEscrow', () => {
             });
         });
     });
+
+    describe('Release Escrow', () => {
+        let escrow: PublicKey;
+        const amount = LAMPORTS_PER_SOL;
+
+        beforeEach(async () => {
+            escrow = await testUtils.createAsymEscrow(
+                testUtils.accounts.admin,
+                testUtils.accounts.payer1.publicKey,
+                testUtils.accounts.receiver1.publicKey,
+                amount
+            );
+
+            // Make full payment
+            await testUtils.placePaymentAsym(
+                testUtils.accounts.payer1,
+                escrow,
+                amount
+            );
+        });
+
+        it('payer can give release consent', async () => {
+            const [programConfig] = testUtils.getProgramConfigPDA();
+            const [escrowVault] = testUtils.getEscrowVaultPDA(escrow);
+
+            await program.methods
+                .releaseEscrowAsym()
+                .accounts({
+                    signer: testUtils.accounts.payer1.publicKey,
+                    escrow,
+                    programConfig,
+                    escrowVault,
+                    receiver: testUtils.accounts.receiver1.publicKey,
+                    feeVault: testUtils.accounts.feeVault.publicKey,
+                    escrowTokenAccount: null,
+                    receiverTokenAccount: null,
+                    feeTokenAccount: null,
+                    tokenProgram: null,
+                    systemProgram: anchor.web3.SystemProgram.programId,
+                })
+                .signers([testUtils.accounts.payer1])
+                .rpc();
+
+            const escrowAccount = await program.account.asymEscrow.fetch(
+                escrow
+            );
+            expect(escrowAccount.payer.released).to.equal(true);
+        });
+
+        it('receiver can give release consent', async () => {
+            const [programConfig] = testUtils.getProgramConfigPDA();
+            const [escrowVault] = testUtils.getEscrowVaultPDA(escrow);
+
+            await program.methods
+                .releaseEscrowAsym()
+                .accounts({
+                    signer: testUtils.accounts.receiver1.publicKey,
+                    escrow,
+                    programConfig,
+                    escrowVault,
+                    receiver: testUtils.accounts.receiver1.publicKey,
+                    feeVault: testUtils.accounts.feeVault.publicKey,
+                    escrowTokenAccount: null,
+                    receiverTokenAccount: null,
+                    feeTokenAccount: null,
+                    tokenProgram: null,
+                    systemProgram: anchor.web3.SystemProgram.programId,
+                })
+                .signers([testUtils.accounts.receiver1])
+                .rpc();
+
+            const escrowAccount = await program.account.asymEscrow.fetch(
+                escrow
+            );
+            expect(escrowAccount.receiver.released).to.equal(true);
+        });
+
+        it.only('escrow is released when both parties give consent', async () => {
+            const [programConfig] = testUtils.getProgramConfigPDA();
+            const [escrowVault] = testUtils.getEscrowVaultPDA(escrow);
+
+            const initialReceiverBalance = await provider.connection.getBalance(
+                testUtils.accounts.receiver1.publicKey
+            );
+            const initialFeeBalance = await provider.connection.getBalance(
+                testUtils.accounts.feeVault.publicKey
+            );
+
+            await program.methods
+                .releaseEscrowAsym()
+                .accounts({
+                    signer: testUtils.accounts.receiver1.publicKey,
+                    escrow,
+                    programConfig,
+                    escrowVault,
+                    receiver: testUtils.accounts.receiver1.publicKey,
+                    feeVault: testUtils.accounts.feeVault.publicKey,
+                    escrowTokenAccount: null,
+                    receiverTokenAccount: null,
+                    feeTokenAccount: null,
+                    tokenProgram: null,
+                    systemProgram: anchor.web3.SystemProgram.programId,
+                })
+                .signers([testUtils.accounts.receiver1])
+                .rpc();
+
+            let escrowAccount = await program.account.asymEscrow.fetch(escrow);
+            expect(escrowAccount.status).to.not.equal(EscrowStatus.Completed);
+
+            await program.methods
+                .releaseEscrowAsym()
+                .accounts({
+                    signer: testUtils.accounts.payer1.publicKey,
+                    escrow,
+                    programConfig,
+                    escrowVault,
+                    receiver: testUtils.accounts.receiver1.publicKey,
+                    feeVault: testUtils.accounts.feeVault.publicKey,
+                    escrowTokenAccount: null,
+                    receiverTokenAccount: null,
+                    feeTokenAccount: null,
+                    tokenProgram: null,
+                    systemProgram: anchor.web3.SystemProgram.programId,
+                })
+                .signers([testUtils.accounts.payer1])
+                .rpc();
+
+            escrowAccount = await program.account.asymEscrow.fetch(escrow);
+            expect(escrowAccount.status).to.equal(EscrowStatus.Completed);
+
+            //TODO: finish this test
+        });
+    });
+
+    describe('Refund Escrow', () => {
+        let escrow: PublicKey;
+        const amount = LAMPORTS_PER_SOL;
+
+        beforeEach(async () => {
+            escrow = await testUtils.createAsymEscrow(
+                testUtils.accounts.admin,
+                testUtils.accounts.payer1.publicKey,
+                testUtils.accounts.receiver1.publicKey,
+                amount
+            );
+
+            // Make full payment
+            await testUtils.placePaymentAsym(
+                testUtils.accounts.payer1,
+                escrow,
+                amount
+            );
+        });
+
+        it('receiver can do a full refund', async () => {
+            const [programConfig] = testUtils.getProgramConfigPDA();
+            const [escrowVault] = testUtils.getEscrowVaultPDA(escrow);
+
+            await program.methods
+                .refundEscrowAsym(new anchor.BN(amount))
+                .accounts({
+                    signer: testUtils.accounts.receiver1.publicKey,
+                    escrow,
+                    programConfig,
+                    escrowVault,
+                    payer: testUtils.accounts.payer1.publicKey,
+                    escrowTokenAccount: null,
+                    payerTokenAccount: null,
+                    tokenProgram: null,
+                    systemProgram: anchor.web3.SystemProgram.programId,
+                })
+                .signers([testUtils.accounts.receiver1])
+                .rpc();
+        });
+    });
 });

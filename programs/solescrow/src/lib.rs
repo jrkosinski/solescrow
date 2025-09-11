@@ -31,6 +31,10 @@ pub mod escrow {
     pub fn release_escrow_asym(ctx: Context<ReleaseEscrowAsym>) -> Result<()> {
         instructions::asym_escrow::release_escrow(ctx)
     }
+
+    pub fn refund_escrow_asym(ctx: Context<RefundEscrowAsym>, amount: u64) -> Result<()> {
+        instructions::asym_escrow::refund_escrow(ctx, amount)
+    }
 }
 
 #[cfg(test)]
