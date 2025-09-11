@@ -329,7 +329,7 @@ describe('AsymEscrow', () => {
             expect(escrowAccount.receiver.released).to.equal(true);
         });
 
-        it.only('escrow is released when both parties give consent', async () => {
+        it('escrow is released when both parties give consent', async () => {
             const [programConfig] = testUtils.getProgramConfigPDA();
             const [escrowVault] = testUtils.getEscrowVaultPDA(escrow);
 

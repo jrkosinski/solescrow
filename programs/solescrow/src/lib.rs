@@ -452,4 +452,46 @@ mod tests {
         
         assert_eq!(expected_fee_max, amount); //entire amount as fee
     }
+
+    #[test]
+    fn test_escrow_refund_logic() {
+        use crate::state::escrow::{AsymEscrow, EscrowParty, EscrowStatus, CurrencyType};
+        
+        //create mock escrow with full payment made
+        let payer_key = Pubkey::new_unique();
+        let receiver_key = Pubkey::new_unique();
+        
+        let mut escrow = AsymEscrow {
+            id: [1u8; 32],
+            payer: EscrowParty {
+                addr: payer_key,
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 1_000_000_000, //1 SOL required
+                amount_paid: 1_000_000_000, //1 SOL paid (fully funded)
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false, //no consent yet
+            },
+            receiver: EscrowParty {
+                addr: receiver_key,
+                currency: Pubkey::default(),
+                currency_type: CurrencyType::Native,
+                amount: 0,
+                amount_paid: 0,
+                amount_refunded: 0,
+                amount_released: 0,
+                released: false, //no consent yet
+            },
+            timestamp: 1600000000,
+            start_time: 0,
+            end_time: 0,
+            status: EscrowStatus::Active,
+            released: false,
+            fee_bps: 100, //1% fee
+            creator: Pubkey::new_unique(),
+            nonce: 12345,
+            bump: 254,
+        };
+    }
 }
